@@ -1,0 +1,344 @@
+{
+  "name": "HSO Email Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "labelIds": ["INBOX"],
+          "q": "is:unread"
+        },
+        "options": {}
+      },
+      "id": "gmail-trigger",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_CRED_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "REPLACE_WITH_AGENT_WEBHOOK_URL/process",
+        "method": "POST",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{$env.HSO_WEBHOOK_SECRET}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message_id\": \"{{$json.id}}\",\n  \"thread_id\": \"{{$json.threadId}}\",\n  \"sender_email\": \"{{$json.from.value[0].address}}\",\n  \"sender_name\": \"{{$json.from.value[0].name}}\",\n  \"subject\": \"{{$json.subject}}\",\n  \"body\": \"{{$json.text}}\",\n  \"attachment_count\": {{$json.attachments ? $json.attachments.length : 0}}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "call-agent",
+      "name": "Call Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "operation": "equal",
+              "value2": "drafted",
+              "output": 0
+            },
+            {
+              "operation": "equal",
+              "value2": "escalated",
+              "output": 1
+            },
+            {
+              "operation": "equal",
+              "value2": "skipped",
+              "output": 2
+            },
+            {
+              "operation": "equal",
+              "value2": "error",
+              "output": 3
+            }
+          ]
+        },
+        "value1": "={{$json.outcome}}",
+        "dataType": "string"
+      },
+      "id": "route-by-outcome",
+      "name": "Route by Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "createDraft",
+        "to": "={{$('Gmail Trigger').item.json.from.value[0].address}}",
+        "subject": "=Re: {{$('Gmail Trigger').item.json.subject}}",
+        "emailType": "html",
+        "message": "={{$('Call Agent').item.json.draft_body}}\n\n---\n\nHope Spot Organization (HSO)\nRingvålvegen 2, 7080 Heimdal, Norway\n+47 944 44 714 | Hope.spot.org@gmail.com\nhopespot.no",
+        "options": {
+          "threadId": "={{$('Gmail Trigger').item.json.threadId}}",
+          "labelIds": [
+            "AI-DRAFT",
+            "=Cat-{{$('Call Agent').item.json.classification.category}}"
+          ]
+        }
+      },
+      "id": "create-gmail-draft",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [900, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_CRED_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+        "sheetName": "Activity Log",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{$now.format('yyyy-MM-dd HH:mm:ss')}}",
+            "message_id": "={{$('Gmail Trigger').item.json.id}}",
+            "thread_id": "={{$('Gmail Trigger').item.json.threadId}}",
+            "sender": "={{$('Gmail Trigger').item.json.from.value[0].address}}",
+            "subject": "={{$('Gmail Trigger').item.json.subject}}",
+            "language": "={{$('Call Agent').item.json.classification.language}}",
+            "category": "={{$('Call Agent').item.json.classification.category}}",
+            "confidence": "={{$('Call Agent').item.json.classification.confidence}}",
+            "welfare_signals": "={{$('Call Agent').item.json.classification.welfare_signals}}",
+            "outcome": "drafted",
+            "draft_id": "={{$json.id}}",
+            "reason": "",
+            "tokens": "={{$('Call Agent').item.json.total_tokens}}",
+            "cost_usd": "={{$('Call Agent').item.json.estimated_cost_usd}}",
+            "latency_ms": "={{$('Call Agent').item.json.latency_ms}}"
+          }
+        }
+      },
+      "id": "log-drafted",
+      "name": "Log Drafted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1120, 100],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "REPLACE_WITH_REVIEWER_CHANNEL",
+        "text": "📧 *AI draft ready for review*\n\n*From:* {{$('Gmail Trigger').item.json.from.value[0].name}} <{{$('Gmail Trigger').item.json.from.value[0].address}}>\n*Subject:* {{$('Gmail Trigger').item.json.subject}}\n*Category:* {{$('Call Agent').item.json.classification.category}} | *Language:* {{$('Call Agent').item.json.classification.language}} | *Confidence:* {{$('Call Agent').item.json.classification.confidence}}\n\nOpen Gmail drafts: https://mail.google.com/mail/u/0/#drafts",
+        "otherOptions": {}
+      },
+      "id": "notify-drafted",
+      "name": "Notify Drafted",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1340, 100],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CRED_ID",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{$('Gmail Trigger').item.json.id}}",
+        "labelIds": [
+          "=ESCALATE-{{$('Call Agent').item.json.escalation_reason}}"
+        ]
+      },
+      "id": "label-escalated",
+      "name": "Label Escalated",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [900, 280],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_CRED_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+        "sheetName": "Activity Log",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{$now.format('yyyy-MM-dd HH:mm:ss')}}",
+            "message_id": "={{$('Gmail Trigger').item.json.id}}",
+            "thread_id": "={{$('Gmail Trigger').item.json.threadId}}",
+            "sender": "={{$('Gmail Trigger').item.json.from.value[0].address}}",
+            "subject": "={{$('Gmail Trigger').item.json.subject}}",
+            "language": "={{$('Call Agent').item.json.classification.language}}",
+            "category": "={{$('Call Agent').item.json.classification.category}}",
+            "confidence": "={{$('Call Agent').item.json.classification.confidence}}",
+            "welfare_signals": "={{$('Call Agent').item.json.classification.welfare_signals}}",
+            "outcome": "escalated",
+            "draft_id": "",
+            "reason": "={{$('Call Agent').item.json.escalation_reason}}",
+            "tokens": "={{$('Call Agent').item.json.total_tokens}}",
+            "cost_usd": "={{$('Call Agent').item.json.estimated_cost_usd}}",
+            "latency_ms": "={{$('Call Agent').item.json.latency_ms}}"
+          }
+        }
+      },
+      "id": "log-escalated",
+      "name": "Log Escalated",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1120, 280],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "={{$('Call Agent').item.json.classification.welfare_signals ? 'REPLACE_WITH_URGENT_CHANNEL' : 'REPLACE_WITH_ESCALATION_CHANNEL'}}",
+        "text": "{{$('Call Agent').item.json.classification.welfare_signals ? '🚨 *URGENT WELFARE — review immediately*' : '⚠️ *Email needs human attention*'}}\n\n*From:* {{$('Gmail Trigger').item.json.from.value[0].name}} <{{$('Gmail Trigger').item.json.from.value[0].address}}>\n*Subject:* {{$('Gmail Trigger').item.json.subject}}\n*Reason:* {{$('Call Agent').item.json.escalation_reason}}\n\nOpen: https://mail.google.com/mail/u/0/#inbox/{{$('Gmail Trigger').item.json.threadId}}",
+        "otherOptions": {}
+      },
+      "id": "notify-escalated",
+      "name": "Notify Escalated",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1340, 280],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CRED_ID",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+        "sheetName": "Activity Log",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{$now.format('yyyy-MM-dd HH:mm:ss')}}",
+            "message_id": "={{$('Gmail Trigger').item.json.id}}",
+            "thread_id": "={{$('Gmail Trigger').item.json.threadId}}",
+            "sender": "={{$('Gmail Trigger').item.json.from.value[0].address}}",
+            "subject": "={{$('Gmail Trigger').item.json.subject}}",
+            "outcome": "skipped",
+            "reason": "={{$('Call Agent').item.json.skip_reason}}",
+            "latency_ms": "={{$('Call Agent').item.json.latency_ms}}"
+          }
+        }
+      },
+      "id": "log-skipped",
+      "name": "Log Skipped",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [900, 460],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_GSHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "REPLACE_WITH_OPS_CHANNEL",
+        "text": "🛑 *Agent error processing email*\n\n*From:* {{$('Gmail Trigger').item.json.from.value[0].address}}\n*Subject:* {{$('Gmail Trigger').item.json.subject}}\n*Error:* {{$('Call Agent').item.json.error_message}}\n\nUnhandled — please review the inbox manually."
+      },
+      "id": "alert-error",
+      "name": "Alert Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [900, 640],
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_WITH_SLACK_CRED_ID",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [[{"node": "Call Agent", "type": "main", "index": 0}]]
+    },
+    "Call Agent": {
+      "main": [[{"node": "Route by Outcome", "type": "main", "index": 0}]]
+    },
+    "Route by Outcome": {
+      "main": [
+        [{"node": "Create Gmail Draft", "type": "main", "index": 0}],
+        [{"node": "Label Escalated", "type": "main", "index": 0}],
+        [{"node": "Log Skipped", "type": "main", "index": 0}],
+        [{"node": "Alert Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Create Gmail Draft": {
+      "main": [[{"node": "Log Drafted", "type": "main", "index": 0}]]
+    },
+    "Log Drafted": {
+      "main": [[{"node": "Notify Drafted", "type": "main", "index": 0}]]
+    },
+    "Label Escalated": {
+      "main": [[{"node": "Log Escalated", "type": "main", "index": 0}]]
+    },
+    "Log Escalated": {
+      "main": [[{"node": "Notify Escalated", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "id": "hso-email-agent",
+  "meta": {
+    "templateCreatedBy": "HSO Email Agent Implementation",
+    "instanceId": "REPLACE_WITH_INSTANCE_ID"
+  },
+  "tags": [{"name": "hso-agent"}]
+}

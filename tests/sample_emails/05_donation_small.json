@@ -1,0 +1,8 @@
+{
+  "message_id": "test-005-donation-small",
+  "thread_id": "test-005-donation-small",
+  "sender_email": "supporter@example.com",
+  "sender_name": "Lars",
+  "subject": "Hvordan donere?",
+  "body": "Hei, jeg vil gjerne donere 500 kr til organisasjonen deres. Hvordan gjør jeg det? Er det mulig å sette opp en månedlig donasjon også?"
+}

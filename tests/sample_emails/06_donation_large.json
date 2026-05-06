@@ -1,0 +1,8 @@
+{
+  "message_id": "test-006-donation-large",
+  "thread_id": "test-006-donation-large",
+  "sender_email": "philanthropist@example.com",
+  "sender_name": "Eva",
+  "subject": "Larger gift",
+  "body": "Hello, I've been following your work and I'd like to make a significant donation. I'm thinking 25,000 NOK and possibly setting up a recurring annual gift. Could someone from your team get in touch to discuss?"
+}

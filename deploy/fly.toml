@@ -1,0 +1,45 @@
+# Fly.io deployment configuration
+#
+# To deploy:
+#   1. Install flyctl: curl -L https://fly.io/install.sh | sh
+#   2. From repo root: fly launch  (it'll see this file and use it)
+#   3. Set secrets:
+#        fly secrets set OPENROUTER_API_KEY=<your-key>
+#        fly secrets set HSO_WEBHOOK_SECRET=<your-secret>
+#   4. Deploy: fly deploy
+
+app = "hso-email-agent"
+primary_region = "arn"  # Stockholm — closest to Norway in Fly's regions
+
+[build]
+
+[env]
+  PORT = "8080"
+  HSO_KB_PATH = "./kb"
+  HSO_DONATION_THRESHOLD_NOK = "5000"
+  HSO_MODEL_CLASSIFIER = "openrouter:anthropic/claude-haiku-4.5"
+  HSO_MODEL_DRAFTER = "openrouter:anthropic/claude-sonnet-4.6"
+  HSO_APP_URL = "https://hopespot.no"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0    # scale to zero between requests for cost savings
+  processes = ["app"]
+
+  [http_service.checks]
+    [http_service.checks.health]
+      grace_period = "10s"
+      interval = "30s"
+      method = "GET"
+      timeout = "5s"
+      path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[processes]
+  app = "gunicorn agents.email.webhook_server:app --bind 0.0.0.0:8080 --workers 2 --timeout 90"

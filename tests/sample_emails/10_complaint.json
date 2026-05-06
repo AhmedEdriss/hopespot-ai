@@ -1,0 +1,8 @@
+{
+  "message_id": "test-010-complaint",
+  "thread_id": "test-010-complaint",
+  "sender_email": "frustrated@example.com",
+  "sender_name": "Ibrahim",
+  "subject": "Very disappointed",
+  "body": "I came to your office last Tuesday and I am very disappointed with how I was treated. The volunteer at the desk was rude and made me feel like I was wasting their time. I have been telling everyone in my community about your organization but now I don't know if I can recommend you anymore. I expect a response."
+}

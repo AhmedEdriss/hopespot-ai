@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run email agent tests (offline, mocked providers)
+        env:
+          HSO_KB_PATH: ./kb
+        run: |
+          python tests/test_email_pipeline.py
+
+      - name: Verify webhook server starts
+        env:
+          HSO_KB_PATH: ./kb
+          OPENROUTER_API_KEY: dummy-for-test
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from agents.email import webhook_server
+          client = webhook_server.app.test_client()
+          r = client.get('/healthz')
+          print('Health check:', r.status_code, r.json)
+          assert r.status_code == 200, f'Expected 200, got {r.status_code}'
+          "

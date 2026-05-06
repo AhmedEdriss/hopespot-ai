@@ -1,0 +1,40 @@
+# Render.com deployment configuration
+#
+# This file makes the email agent deployable to Render with one click.
+# https://render.com/docs/blueprint-spec
+#
+# To deploy:
+#   1. Push this repo to GitHub
+#   2. In Render dashboard: New → Blueprint → connect repo
+#   3. Render reads this file and creates the service
+#   4. Add environment variables (OPENROUTER_API_KEY, HSO_WEBHOOK_SECRET, etc.)
+#      via the Render dashboard — DO NOT put secrets in this file
+
+services:
+  - type: web
+    name: hso-email-agent
+    runtime: python
+    plan: starter           # ~$7/month; the free plan sleeps after inactivity
+    branch: main
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn agents.email.webhook_server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 90
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # Public/non-secret env vars can live here
+      - key: HSO_KB_PATH
+        value: ./kb
+      - key: HSO_DONATION_THRESHOLD_NOK
+        value: "5000"
+      - key: HSO_MODEL_CLASSIFIER
+        value: openrouter:anthropic/claude-haiku-4.5
+      - key: HSO_MODEL_DRAFTER
+        value: openrouter:anthropic/claude-sonnet-4.6
+      - key: HSO_APP_URL
+        value: https://hopespot.no
+      # Secrets — set these in the Render dashboard, do NOT commit them
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: HSO_WEBHOOK_SECRET
+        sync: false

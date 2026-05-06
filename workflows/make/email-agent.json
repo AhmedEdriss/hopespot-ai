@@ -1,0 +1,424 @@
+{
+  "name": "HSO Email Agent",
+  "flow": [
+    {
+      "id": 1,
+      "module": "google-email:TriggerWatchEmails",
+      "version": 4,
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        },
+        "restore": {
+          "parameters": {
+            "folder": "INBOX",
+            "criteria": "all",
+            "markSeen": false
+          }
+        }
+      },
+      "parameters": {
+        "__IMTCONN__": "REPLACE_WITH_GMAIL_CONNECTION_ID",
+        "folder": "INBOX",
+        "criteria": "all",
+        "limit": 10,
+        "markSeen": false
+      },
+      "interface": [
+        {
+          "name": "id",
+          "type": "text"
+        },
+        {
+          "name": "threadId",
+          "type": "text"
+        },
+        {
+          "name": "from",
+          "type": "collection"
+        },
+        {
+          "name": "subject",
+          "type": "text"
+        },
+        {
+          "name": "textPlain",
+          "type": "text"
+        },
+        {
+          "name": "attachments",
+          "type": "array"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 0
+        },
+        "expect": [
+          {
+            "name": "method",
+            "type": "select",
+            "label": "Method"
+          }
+        ],
+        "_comment": "Calls our Python webhook server (or any agent endpoint). Replace URL with your deployment."
+      },
+      "parameters": {
+        "handleErrors": false,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "REPLACE_WITH_AGENT_WEBHOOK_URL/process",
+        "method": "post",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "name": "X-Webhook-Secret",
+            "value": "{{REPLACE_WITH_WEBHOOK_SECRET}}"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "parseResponse": true,
+        "authUser": "",
+        "authPass": "",
+        "timeout": "60",
+        "shareCookies": false,
+        "ca": "",
+        "rejectUnauthorized": true,
+        "followRedirect": true,
+        "useQuerystring": false,
+        "gzip": true,
+        "useMtls": false,
+        "contentType": "application/json",
+        "data": "{\n  \"message_id\": \"{{1.id}}\",\n  \"thread_id\": \"{{1.threadId}}\",\n  \"sender_email\": \"{{1.from.address}}\",\n  \"sender_name\": \"{{1.from.name}}\",\n  \"subject\": \"{{1.subject}}\",\n  \"body\": \"{{1.textPlain}}\",\n  \"attachment_count\": \"{{length(1.attachments)}}\"\n}",
+        "followAllRedirects": false
+      }
+    },
+    {
+      "id": 3,
+      "module": "builtin:BasicRouter",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 600,
+          "y": 0
+        }
+      },
+      "routes": [
+        {
+          "name": "DRAFTED — create Gmail draft",
+          "filter": {
+            "name": "outcome == drafted",
+            "conditions": [
+              [
+                {
+                  "a": "{{2.outcome}}",
+                  "b": "drafted",
+                  "o": "text:equal"
+                }
+              ]
+            ]
+          },
+          "flow": [
+            {
+              "id": 4,
+              "module": "google-email:ActionDraftEmail",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": -150
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_GMAIL_CONNECTION_ID"
+              },
+              "mapper": {
+                "to": [{"address": "{{1.from.address}}", "name": "{{1.from.name}}"}],
+                "subject": "Re: {{1.subject}}",
+                "html": "{{2.draft_body}}\n\n---\n\nHope Spot Organization (HSO)\nRingvålvegen 2, 7080 Heimdal, Norway\n+47 944 44 714 | Hope.spot.org@gmail.com\nhopespot.no",
+                "threadId": "{{1.threadId}}",
+                "labels": ["AI-DRAFT", "Cat-{{2.classification.category}}", "Lang-{{2.classification.language}}"]
+              }
+            },
+            {
+              "id": 5,
+              "module": "google-sheets:addRow",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": -150
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_GSHEETS_CONNECTION_ID",
+                "mode": "select",
+                "spreadsheetId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+                "sheetName": "Activity Log",
+                "valueInputOption": "USER_ENTERED",
+                "insertDataOption": "INSERT_ROWS"
+              },
+              "mapper": {
+                "values": [
+                  "{{formatDate(now; 'YYYY-MM-DD HH:mm:ss')}}",
+                  "{{1.id}}",
+                  "{{1.threadId}}",
+                  "{{1.from.address}}",
+                  "{{1.subject}}",
+                  "{{2.classification.language}}",
+                  "{{2.classification.category}}",
+                  "{{2.classification.confidence}}",
+                  "{{2.classification.welfare_signals}}",
+                  "drafted",
+                  "{{4.id}}",
+                  "",
+                  "{{2.total_tokens}}",
+                  "{{2.estimated_cost_usd}}",
+                  "{{2.latency_ms}}"
+                ]
+              }
+            },
+            {
+              "id": 6,
+              "module": "slack:sendDirectMessage",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": -150
+                },
+                "_comment": "Notify reviewer that a draft is ready. Configure channel/recipient."
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_SLACK_CONNECTION_ID"
+              },
+              "mapper": {
+                "channel": "REPLACE_WITH_REVIEWER_CHANNEL",
+                "text": "📧 *AI draft ready for review*\n\n*From:* {{1.from.name}} <{{1.from.address}}>\n*Subject:* {{1.subject}}\n*Category:* {{2.classification.category}} | *Language:* {{2.classification.language}} | *Confidence:* {{2.classification.confidence}}\n\nOpen Gmail draft: https://mail.google.com/mail/u/0/#drafts"
+              }
+            }
+          ]
+        },
+        {
+          "name": "ESCALATED — flag and notify",
+          "filter": {
+            "name": "outcome == escalated",
+            "conditions": [
+              [
+                {
+                  "a": "{{2.outcome}}",
+                  "b": "escalated",
+                  "o": "text:equal"
+                }
+              ]
+            ]
+          },
+          "flow": [
+            {
+              "id": 7,
+              "module": "google-email:addLabels",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 50
+                },
+                "_comment": "Tag the original email with an escalation label so humans can find it."
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_GMAIL_CONNECTION_ID"
+              },
+              "mapper": {
+                "messageId": "{{1.id}}",
+                "labelIds": ["ESCALATE-{{2.escalation_reason}}"]
+              }
+            },
+            {
+              "id": 8,
+              "module": "google-sheets:addRow",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": 50
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_GSHEETS_CONNECTION_ID",
+                "mode": "select",
+                "spreadsheetId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+                "sheetName": "Activity Log"
+              },
+              "mapper": {
+                "values": [
+                  "{{formatDate(now; 'YYYY-MM-DD HH:mm:ss')}}",
+                  "{{1.id}}",
+                  "{{1.threadId}}",
+                  "{{1.from.address}}",
+                  "{{1.subject}}",
+                  "{{2.classification.language}}",
+                  "{{2.classification.category}}",
+                  "{{2.classification.confidence}}",
+                  "{{2.classification.welfare_signals}}",
+                  "escalated",
+                  "",
+                  "{{2.escalation_reason}}",
+                  "{{2.total_tokens}}",
+                  "{{2.estimated_cost_usd}}",
+                  "{{2.latency_ms}}"
+                ]
+              }
+            },
+            {
+              "id": 9,
+              "module": "slack:sendDirectMessage",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 50
+                },
+                "_comment": "Use route-specific channels for urgent_welfare etc. Configure based on your team."
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_SLACK_CONNECTION_ID"
+              },
+              "mapper": {
+                "channel": "REPLACE_WITH_ESCALATION_CHANNEL",
+                "text": "⚠️ *Email needs human attention*\n\n*From:* {{1.from.name}} <{{1.from.address}}>\n*Subject:* {{1.subject}}\n*Reason:* {{2.escalation_reason}}\n\n{{if(2.classification.welfare_signals; '🚨 *URGENT WELFARE — please review immediately*'; '')}}\n\nOpen email: https://mail.google.com/mail/u/0/#inbox/{{1.threadId}}"
+              }
+            }
+          ]
+        },
+        {
+          "name": "SKIPPED — log only",
+          "filter": {
+            "name": "outcome == skipped",
+            "conditions": [
+              [
+                {
+                  "a": "{{2.outcome}}",
+                  "b": "skipped",
+                  "o": "text:equal"
+                }
+              ]
+            ]
+          },
+          "flow": [
+            {
+              "id": 10,
+              "module": "google-sheets:addRow",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 200
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_GSHEETS_CONNECTION_ID",
+                "mode": "select",
+                "spreadsheetId": "REPLACE_WITH_LOG_SPREADSHEET_ID",
+                "sheetName": "Activity Log"
+              },
+              "mapper": {
+                "values": [
+                  "{{formatDate(now; 'YYYY-MM-DD HH:mm:ss')}}",
+                  "{{1.id}}",
+                  "{{1.threadId}}",
+                  "{{1.from.address}}",
+                  "{{1.subject}}",
+                  "",
+                  "",
+                  "",
+                  "",
+                  "skipped",
+                  "",
+                  "{{2.skip_reason}}",
+                  "0",
+                  "0",
+                  "{{2.latency_ms}}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "ERROR — alert ops",
+          "filter": {
+            "name": "outcome == error",
+            "conditions": [
+              [
+                {
+                  "a": "{{2.outcome}}",
+                  "b": "error",
+                  "o": "text:equal"
+                }
+              ]
+            ]
+          },
+          "flow": [
+            {
+              "id": 11,
+              "module": "slack:sendDirectMessage",
+              "version": 4,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 350
+                }
+              },
+              "parameters": {
+                "__IMTCONN__": "REPLACE_WITH_SLACK_CONNECTION_ID"
+              },
+              "mapper": {
+                "channel": "REPLACE_WITH_OPS_CHANNEL",
+                "text": "🛑 *Agent error processing email*\n\n*From:* {{1.from.address}}\n*Subject:* {{1.subject}}\n*Error:* {{2.error_message}}\n\nThe email is unhandled — please review the inbox manually."
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "instant": false,
+    "version": 1,
+    "scenario": {
+      "roundtrips": 1,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "autoCommitTriggerLast": true,
+      "sequential": false,
+      "confidential": false,
+      "dataloss": false,
+      "dlq": false,
+      "freshVariables": false
+    },
+    "designer": {
+      "orphans": []
+    },
+    "zone": "eu1.make.com",
+    "notes": [
+      "REPLACE_WITH_* placeholders must be filled before this scenario will run.",
+      "Required Make.com connections: Gmail, Google Sheets, Slack",
+      "Required external services: Python webhook (deployed somewhere reachable from Make).",
+      "The webhook URL must accept POSTs with the email payload and return JSON matching agent.AgentResult.",
+      "Set up Gmail labels in advance: AI-DRAFT, Cat-services_enquiry, Cat-volunteer_enquiry, etc.",
+      "Set up Gmail labels for escalations: ESCALATE-urgent_welfare, ESCALATE-media_press, etc.",
+      "Set up the Google Sheet with these columns: timestamp, message_id, thread_id, sender, subject, language, category, confidence, welfare_signals, outcome, draft_id, escalation_or_skip_reason, total_tokens, cost_usd, latency_ms"
+    ]
+  }
+}

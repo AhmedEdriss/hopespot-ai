@@ -1,0 +1,8 @@
+{
+  "message_id": "test-011-autoreply",
+  "thread_id": "test-011-autoreply",
+  "sender_email": "noreply@somecompany.no",
+  "sender_name": "Auto Reply",
+  "subject": "Out of Office - Auto-reply",
+  "body": "Thank you for your email. I am currently out of the office and will return on Monday. I will respond to your message when I return."
+}
