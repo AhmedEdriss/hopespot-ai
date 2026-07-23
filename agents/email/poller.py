@@ -187,6 +187,11 @@ def run_once(client: GmailClient, agent_fn=None, labels: dict = None) -> dict:
 
             client.add_labels(mid, to_apply)
             episodic_store.log_result(payload, result, draft_id)
+            # Mirror the log row to the sheet's _Activity tab (best-effort;
+            # only when the control-panel sheet is configured).
+            if os.environ.get("HSO_KB_SHEET_ID"):
+                kb_sync.append_activity(client.access_token(), payload,
+                                        result, draft_id)
 
         except GmailError as e:
             stats["errors"] += 1
@@ -215,17 +220,28 @@ def main() -> None:
 
     client = GmailClient.from_env()
     labels = client.ensure_labels(ALL_LABELS)
+    if os.environ.get("HSO_KB_SHEET_ID"):
+        kb_sync.ensure_panel_tabs(client.access_token())
     logger.info("Poller started. query=%r interval=%ss max_per_cycle=%s",
                 GMAIL_QUERY, POLL_INTERVAL_SEC, MAX_PER_CYCLE)
 
+    was_paused = False
     while True:
         try:
-            # Refresh the sheet-synced live KB first (no-op unless
-            # HSO_KB_SHEET_ID is set and the sync interval has elapsed).
-            kb_sync.sync_if_due(client.access_token)
-            stats = run_once(client, labels=labels)
-            if stats["seen"]:
-                logger.info("Cycle done: %s", stats)
+            if kb_sync.is_paused(client.access_token()):
+                if not was_paused:
+                    logger.info("Paused via _Controls sheet; standing by")
+                    was_paused = True
+            else:
+                if was_paused:
+                    logger.info("Unpaused via _Controls sheet; resuming")
+                    was_paused = False
+                # Refresh the sheet-synced live KB first (no-op unless
+                # HSO_KB_SHEET_ID is set and the sync interval has elapsed).
+                kb_sync.sync_if_due(client.access_token)
+                stats = run_once(client, labels=labels)
+                if stats["seen"]:
+                    logger.info("Cycle done: %s", stats)
         except Exception:
             logger.exception("Polling cycle failed; will retry next interval")
         if args.once:
