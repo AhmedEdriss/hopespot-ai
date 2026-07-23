@@ -1,40 +1,61 @@
-# Render.com deployment configuration
+# Render.com deployment configuration — pure-Python email agent
 #
-# This file makes the email agent deployable to Render with one click.
-# https://render.com/docs/blueprint-spec
+# One background worker polls the HSO Gmail inbox, runs the triage agent,
+# and creates review drafts. No Make/n8n in the data path.
 #
 # To deploy:
-#   1. Push this repo to GitHub
-#   2. In Render dashboard: New → Blueprint → connect repo
-#   3. Render reads this file and creates the service
-#   4. Add environment variables (OPENROUTER_API_KEY, HSO_WEBHOOK_SECRET, etc.)
-#      via the Render dashboard — DO NOT put secrets in this file
+#   1. Commit and push this repo to GitHub
+#   2. Render dashboard: New -> Blueprint -> connect repo
+#   3. Set the secret env vars (marked sync: false) in the dashboard —
+#      DO NOT put secrets in this file
+#
+# region: frankfurt keeps all processing in the EU (GDPR requirement).
 
 services:
-  - type: web
-    name: hso-email-agent
+  - type: worker
+    name: hso-email-poller
     runtime: python
-    plan: starter           # ~$7/month; the free plan sleeps after inactivity
+    region: frankfurt
+    plan: starter            # workers have no free tier; ~$7/month
     branch: main
     rootDir: .
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn agents.email.webhook_server:app --bind 0.0.0.0:$PORT --workers 2 --timeout 90
-    healthCheckPath: /healthz
+    startCommand: python agents/email/poller.py
     autoDeploy: true
+    disk:
+      name: hso-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
-      # Public/non-secret env vars can live here
+      # Non-secret configuration
+      - key: HSO_DB_PATH
+        value: /data/hso.db
       - key: HSO_KB_PATH
         value: ./kb
       - key: HSO_DONATION_THRESHOLD_NOK
         value: "5000"
+      - key: HSO_POLL_INTERVAL_SEC
+        value: "300"
+      - key: HSO_MAX_PER_CYCLE
+        value: "10"
       - key: HSO_MODEL_CLASSIFIER
         value: openrouter:anthropic/claude-haiku-4.5
       - key: HSO_MODEL_DRAFTER
         value: openrouter:anthropic/claude-sonnet-4.6
       - key: HSO_APP_URL
         value: https://hopespot.no
-      # Secrets — set these in the Render dashboard, do NOT commit them
+      - key: HSO_KB_SYNC_INTERVAL_SEC
+        value: "21600"          # re-sync the KB sheet every 6 hours
+      # Spreadsheet ID of the HSO live-KB sheet (classes, events, ...).
+      # Not secret, but per-install: set it in the dashboard.
+      - key: HSO_KB_SHEET_ID
+        sync: false
+      # Secrets — set in the Render dashboard only
       - key: OPENROUTER_API_KEY
         sync: false
-      - key: HSO_WEBHOOK_SECRET
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
         sync: false
