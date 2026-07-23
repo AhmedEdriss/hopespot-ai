@@ -147,6 +147,129 @@ def sync(access_token: str, sheet_id: str = "", fetch_fn=None) -> bool:
     return changed
 
 
+# ---------------------------------------------------------------------------
+# Control panel — the same sheet doubles as HSO's interface to the agent.
+#   _Activity tab: one row per processed email (agent appends)
+#   _Controls tab: "paused" switch staff can flip (agent reads each cycle)
+# Underscore-prefixed tabs are already excluded from the KB sync above.
+# Requires the read-write spreadsheets scope on the refresh token.
+# ---------------------------------------------------------------------------
+
+ACTIVITY_TAB = "_Activity"
+CONTROLS_TAB = "_Controls"
+ACTIVITY_HEADERS = [
+    "time_utc", "sender", "subject", "language", "category",
+    "confidence", "outcome", "reason", "draft_id", "tokens", "cost_usd",
+]
+
+
+def _sheet_id() -> str:
+    return os.environ.get("HSO_KB_SHEET_ID", "")
+
+
+def ensure_panel_tabs(access_token: str) -> bool:
+    """Create _Activity (with header row) and _Controls tabs if missing."""
+    sheet_id = _sheet_id()
+    if not sheet_id:
+        return False
+    try:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        meta = requests.get(
+            f"{SHEETS_API}/{sheet_id}",
+            params={"fields": "sheets.properties.title"},
+            headers=headers, timeout=30,
+        )
+        meta.raise_for_status()
+        titles = [s["properties"]["title"] for s in meta.json().get("sheets", [])]
+
+        to_add = [t for t in (ACTIVITY_TAB, CONTROLS_TAB) if t not in titles]
+        if to_add:
+            r = requests.post(
+                f"{SHEETS_API}/{sheet_id}:batchUpdate",
+                json={"requests": [
+                    {"addSheet": {"properties": {"title": t}}} for t in to_add
+                ]},
+                headers=headers, timeout=30,
+            )
+            r.raise_for_status()
+        if ACTIVITY_TAB in to_add:
+            _append_values(access_token, sheet_id, ACTIVITY_TAB,
+                           [ACTIVITY_HEADERS])
+        if CONTROLS_TAB in to_add:
+            _append_values(access_token, sheet_id, CONTROLS_TAB,
+                           [["setting", "value", "notes"],
+                            ["paused", "no",
+                             "set to yes to stop the agent processing email"]])
+        return True
+    except Exception as e:
+        logger.error("ensure_panel_tabs failed: %s", e)
+        return False
+
+
+def _append_values(access_token: str, sheet_id: str, tab: str,
+                   values: list[list]) -> None:
+    r = requests.post(
+        f"{SHEETS_API}/{sheet_id}/values/"
+        f"{urllib.parse.quote(tab + '!A1')}:append",
+        params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
+        json={"values": values},
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=30,
+    )
+    r.raise_for_status()
+
+
+def append_activity(access_token: str, payload: dict, result: dict,
+                    draft_id: str = "") -> bool:
+    """Append one processed-email row to the _Activity tab. Best-effort:
+    a failure here must never break email processing."""
+    sheet_id = _sheet_id()
+    if not sheet_id:
+        return False
+    try:
+        c = result.get("classification") or {}
+        reason = (result.get("escalation_reason")
+                  or result.get("skip_reason")
+                  or result.get("error_message") or "")
+        row = [
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            payload.get("sender_email", ""),
+            payload.get("subject", "")[:100],
+            c.get("language", ""), c.get("category", ""),
+            c.get("confidence", ""), result.get("outcome", ""),
+            str(reason)[:200], draft_id,
+            int(result.get("total_tokens") or 0),
+            round(float(result.get("estimated_cost_usd") or 0.0), 5),
+        ]
+        _append_values(access_token, sheet_id, ACTIVITY_TAB, [row])
+        return True
+    except Exception as e:
+        logger.error("append_activity failed (continuing): %s", e)
+        return False
+
+
+def is_paused(access_token: str) -> bool:
+    """Read the paused switch from _Controls. Fails open: if the sheet is
+    unreachable, the agent keeps working."""
+    sheet_id = _sheet_id()
+    if not sheet_id:
+        return False
+    try:
+        r = requests.get(
+            f"{SHEETS_API}/{sheet_id}/values/"
+            f"{urllib.parse.quote(CONTROLS_TAB + '!A1:B20')}",
+            headers={"Authorization": f"Bearer {access_token}"}, timeout=30,
+        )
+        r.raise_for_status()
+        for row in r.json().get("values", []):
+            if row and str(row[0]).strip().lower() == "paused":
+                value = str(row[1]).strip().lower() if len(row) > 1 else "no"
+                return value in ("yes", "true", "1", "on")
+        return False
+    except Exception as e:
+        logger.error("is_paused check failed (assuming not paused): %s", e)
+        return False
+
+
 def sync_if_due(access_token_fn, interval_sec: int = None) -> bool:
     """Call from the poller loop; runs a sync at most every interval_sec."""
     global _last_sync_ts
