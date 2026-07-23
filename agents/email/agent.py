@@ -5,7 +5,7 @@ Reads incoming emails, classifies them, and either drafts a reply (using
 HSO's voice and KB) or escalates to a human.
 
 This module focuses purely on the agent logic. The orchestrator
-(Make.com / n8n / cron) handles the surface integration:
+(the Gmail poller, Make.com / n8n, or cron) handles the surface integration:
     - Watching the inbox
     - Creating Gmail drafts
     - Logging activity
@@ -41,7 +41,7 @@ from shared.model_gateway import (  # noqa: E402
     ModelError, call_model, estimate_cost_usd, resolve_model,
 )
 from shared.kb_loader import (  # noqa: E402
-    load_core_context, load_category_context,
+    load_core_context, load_category_context, load_live_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,7 @@ class IncomingEmail:
     received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     has_attachments: bool = False
     attachment_count: int = 0
+    thread_history: str = ""  # earlier messages in this thread, oldest first
 
 
 @dataclass
@@ -368,7 +369,9 @@ def decide_route(email: IncomingEmail, c: Classification) -> Optional[str]:
 def load_drafter_context(category: Category) -> str:
     core = load_core_context()
     cat_specific = load_category_context(category.value, CATEGORY_TO_KB_FILES)
-    return f"{core}\n\n{cat_specific}" if cat_specific else core
+    live = load_live_context()  # sheet-synced current schedules/events
+    parts = [core] + [p for p in (cat_specific, live) if p]
+    return "\n\n".join(parts)
 
 
 # ============================================================================
@@ -396,6 +399,18 @@ Reply in the language detected by the classifier:
 - arabic → Arabic
 - ukrainian → Ukrainian
 - other → output exactly: [ESCALATE: language not supported]
+
+# Thread context
+
+If earlier messages in the thread are provided, you are drafting the NEXT \
+reply in an ongoing conversation, not a first response:
+- Do not repeat information already given earlier in the thread
+- Do not re-introduce HSO or greet as if for the first time
+- Stay consistent with what was already said (by HSO staff or by earlier \
+drafts) — if something earlier now seems wrong, escalate instead of \
+contradicting it
+- If the conversation has moved beyond what the KB covers, escalate with \
+[ESCALATE: conversation beyond KB scope]
 
 # Voice
 
@@ -436,6 +451,13 @@ If you don't have specific info, do NOT invent. Use general phrasing or escalate
 def draft_reply(email: IncomingEmail, c: Classification) -> tuple[str, int]:
     context = load_drafter_context(c.category)
 
+    history_section = ""
+    if email.thread_history:
+        history_section = (
+            "# === EARLIER MESSAGES IN THIS THREAD (oldest first) ===\n\n"
+            f"{email.thread_history}\n\n"
+        )
+
     user_message = f"""\
 {context}
 
@@ -445,7 +467,7 @@ Language: {c.language.value}
 Category: {c.category.value}
 Confidence: {c.confidence}
 
-# === ORIGINAL EMAIL ===
+{history_section}# === EMAIL TO REPLY TO ===
 
 From: {email.sender_name} <{email.sender_email}>
 Subject: {email.subject}
@@ -571,6 +593,7 @@ def process_email_from_dict(payload: dict) -> dict:
         body=payload.get("body", ""),
         has_attachments=payload.get("attachment_count", 0) > 0,
         attachment_count=payload.get("attachment_count", 0),
+        thread_history=payload.get("thread_history", ""),
     )
     return process_email(email).to_dict()
 
