@@ -10,6 +10,10 @@ All agents use this module to read KB content. Centralizing it gives us:
 The KB lives in markdown files under a root directory (default: ./kb).
 Files have YAML frontmatter with metadata; this loader exposes both the
 raw content and the parsed metadata.
+
+kb/01_Live/ is special: its files are generated from a Google Sheet by
+shared/kb_sync.py and always reflect current schedules/events. Use
+load_live_context() to include them.
 """
 
 from __future__ import annotations
@@ -228,4 +232,25 @@ def load_category_context(
     """
     paths = category_to_files.get(category, [])
     docs = load_many(paths, require_approved=require_approved)
+    return assemble_context(docs)
+
+
+# ============================================================================
+# Live KB — sheet-synced current schedules/events (see shared/kb_sync.py)
+# ============================================================================
+
+LIVE_SUBDIR = "01_Live"
+
+
+def load_live_context(subdir: str = LIVE_SUBDIR) -> str:
+    """Load every document in kb/01_Live/ (sheet-synced current info).
+    Returns "" if the folder doesn't exist or is empty."""
+    live_dir = get_kb_root() / subdir
+    if not live_dir.exists():
+        return ""
+    docs = []
+    for path in sorted(live_dir.glob("*.md")):
+        doc = load_document(f"{subdir}/{path.name}")
+        if doc:
+            docs.append(doc)
     return assemble_context(docs)
